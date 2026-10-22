@@ -122,7 +122,7 @@ def demo_info() -> dict[str, Any]:
         ],
         "notes": [
             "Each store is a separate tenant: logging into one never shows the other's data.",
-            "All data is fictitious and is reset every night.",
+            "All data is fictitious and is reset periodically.",
         ],
     }
 

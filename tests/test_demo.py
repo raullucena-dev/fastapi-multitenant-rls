@@ -182,7 +182,8 @@ def test_demo_info_lists_stores_and_credentials(client: TestClient) -> None:
         "north.manager",
         "north.cashier",
     ]
-    assert body["notes"]
+    assert "All data is fictitious and is reset periodically." in body["notes"]
+    assert not any("every night" in note for note in body["notes"])
 
 
 # --- reset-demo ------------------------------------------------------------------------------
