@@ -3,8 +3,11 @@ import logging
 import sys
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from app.core.logging import JsonFormatter, request_id_var
+from app.db.session import get_db
+from app.main import app
 
 
 def test_health_reports_database_ok(client: TestClient) -> None:
@@ -45,3 +48,17 @@ def test_json_formatter_includes_exception() -> None:
         record = logging.makeLogRecord({"msg": "failed", "exc_info": sys.exc_info()})
     payload = json.loads(JsonFormatter().format(record))
     assert "ValueError: boom" in payload["exc_info"]
+
+
+def test_health_reports_degraded_when_database_fails(client: TestClient) -> None:
+    class BrokenSession:
+        def execute(self, *_: object) -> None:
+            raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    app.dependency_overrides[get_db] = BrokenSession
+    try:
+        response = client.get("/health")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 503
+    assert response.json() == {"status": "degraded", "database": "unavailable"}
