@@ -1,0 +1,50 @@
+# Local development stack. Credentials below are development-only placeholders.
+name: fastapi-multitenant-rls
+
+x-app-env: &app-env
+  ENVIRONMENT: local
+  DATABASE_URL: postgresql+psycopg://app_user:app_user_dev_pw@db:5432/app
+  MIGRATIONS_DATABASE_URL: postgresql+psycopg://app_owner:app_owner_dev_pw@db:5432/app
+  SECRET_KEY: ${SECRET_KEY:-dev-only-insecure-secret-change-me}
+  LOG_LEVEL: INFO
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      APP_OWNER_PASSWORD: app_owner_dev_pw
+      APP_USER_PASSWORD: app_user_dev_pw
+      APP_DATABASES: "app app_test"
+    volumes:
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+      - ./db/bootstrap.sql:/bootstrap/bootstrap.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
