@@ -21,7 +21,11 @@ COPY app ./app
 RUN useradd --system --uid 10001 --no-create-home app
 USER app
 
+# Cloud Run injects $PORT. One worker suits 1 vCPU: sync endpoints already run in a
+# thread pool, and the DB pool caps concurrency. FORWARDED_ALLOW_IPS=* trusts the
+# X-Forwarded-For header set by the platform's front end (see docs/deploy.md).
+ENV PORT=8000 WEB_CONCURRENCY=1 FORWARDED_ALLOW_IPS="*"
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+  CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ['PORT']}/health\", timeout=2)"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"$PORT\" --workers \"$WEB_CONCURRENCY\" --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\" --timeout-graceful-shutdown 20"]
