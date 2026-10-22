@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: ruff check
+        run: uv run ruff check --output-format=github .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: mypy (strict)
+        run: uv run mypy
+
+  test:
+    name: Tests (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publishes the coverage badge to the `badges` branch
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      DATABASE_URL: postgresql+psycopg://app_user:app_user_ci_pw@localhost:5432/app_test
+      MIGRATIONS_DATABASE_URL: postgresql+psycopg://app_owner:app_owner_ci_pw@localhost:5432/app_test
+      TEST_SUPERUSER_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Bootstrap roles and database
+        run: >-
+          psql -v owner_password=app_owner_ci_pw -v app_password=app_user_ci_pw
+          -v databases=app_test -f db/bootstrap.sql
+      - name: Run tests
+        run: >-
+          uv run pytest --cov --cov-report=term-missing --cov-report=xml
+          --cov-report=json --cov-fail-under=85
+      - name: Coverage summary
+        if: always()
+        run: uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
+      - name: Publish coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pct=$(python3 -c "import json; print(round(json.load(open('coverage.json'))['totals']['percent_covered']))")
+          if [ "$pct" -ge 90 ]; then color=brightgreen; elif [ "$pct" -ge 85 ]; then color=green; else color=orange; fi
+          dir=$(mktemp -d)
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > "$dir/coverage.json"
+          cd "$dir"
+          git init -q -b badges
+          git add coverage.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "chore: coverage ${pct}%"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+
+  docker:
+    name: Docker compose smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait db api
+      - name: Seed demo tenants
+        run: docker compose run --rm migrate python -m app.cli seed-demo
+      - name: Smoke test
+        run: |
+          curl -fsS localhost:8000/health
+          curl -fsS -c jar -H 'content-type: application/json' \
+            -d '{"username":"alpha-cashier","password":"demo-password-123"}' localhost:8000/auth/login
+          curl -fsS -b jar localhost:8000/products | grep -q HAM-16
+          # Same session must not see the other tenant's catalogue.
+          ! curl -fsS -b jar localhost:8000/products | grep -q TEA-GRN
+      - name: Logs
+        if: failure()
+        run: docker compose logs
