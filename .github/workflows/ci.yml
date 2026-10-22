@@ -31,8 +31,15 @@ jobs:
         run: uv run mypy
 
   test:
-    name: Tests (PostgreSQL 16)
+    name: Tests (PostgreSQL 16, ${{ matrix.bootstrap }} bootstrap)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # superuser: roles created by a real superuser (docker compose, self-hosted).
+        # managed: roles created by a non-superuser owner with CREATEROLE/CREATEDB that is
+        # a member of neon_superuser, emulating Neon's neondb_owner.
+        bootstrap: [superuser, managed]
     permissions:
       contents: write # publishes the coverage badge to the `badges` branch
     services:
@@ -61,10 +68,28 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --frozen
+      - name: Emulate a managed-Postgres owner role (Neon-like)
+        if: matrix.bootstrap == 'managed'
+        run: |
+          psql -d postgres -c "CREATE ROLE neon_superuser NOLOGIN CREATEDB CREATEROLE"
+          psql -d postgres -c "CREATE ROLE neondb_owner LOGIN PASSWORD 'owner_ci_pw' CREATEDB CREATEROLE IN ROLE neon_superuser"
       - name: Bootstrap roles and database
-        run: >-
-          psql -v owner_password=app_owner_ci_pw -v app_password=app_user_ci_pw
-          -v databases=app_test -f db/bootstrap.sql
+        env:
+          APP_OWNER_PASSWORD: app_owner_ci_pw
+          APP_USER_PASSWORD: app_user_ci_pw
+          APP_DATABASES: app_test
+        run: |
+          if [ "${{ matrix.bootstrap }}" = managed ]; then
+            PGUSER=neondb_owner PGPASSWORD=owner_ci_pw psql -d postgres -f scripts/bootstrap_roles.sql
+          else
+            psql -d postgres -f scripts/bootstrap_roles.sql
+          fi
+          # Idempotent: a second run must succeed too.
+          if [ "${{ matrix.bootstrap }}" = managed ]; then
+            PGUSER=neondb_owner PGPASSWORD=owner_ci_pw psql -d postgres -f scripts/bootstrap_roles.sql
+          else
+            psql -d postgres -f scripts/bootstrap_roles.sql
+          fi
       - name: Run tests
         run: >-
           uv run pytest --cov --cov-report=term-missing --cov-report=xml
@@ -75,10 +100,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage
+          name: coverage-${{ matrix.bootstrap }}
           path: coverage.xml
       - name: Publish coverage badge
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.bootstrap == 'superuser'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -110,6 +135,13 @@ jobs:
           curl -fsS -b jar localhost:8000/products | grep -q HAM-16
           # Same session must not see the other tenant's catalogue.
           ! curl -fsS -b jar localhost:8000/products | grep -q TEA-GRN
+      - name: Demo reset job (same image and command as the Cloud Run Job)
+        run: |
+          docker compose run --rm -e DEMO_MODE=true migrate python -m app.cli reset-demo --days 3
+          curl -fsS -c demo -H 'content-type: application/json' \
+            -d '{"username":"north.cashier","password":"demo1234"}' localhost:8000/auth/login
+          curl -fsS -b demo "localhost:8000/products?limit=200" | grep -q ALM-001
+          ! curl -fsS -b demo "localhost:8000/products?limit=200" | grep -q FER-001
       - name: Logs
         if: failure()
         run: docker compose logs
