@@ -4,7 +4,7 @@ COMPOSE ?= docker compose
 # Tests run on the host against the compose database (app_test).
 TEST_ENV = TEST_SUPERUSER_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/app_test
 
-.PHONY: help install up down logs migrate seed test cov lint fmt typecheck check
+.PHONY: help install up down logs migrate seed reset-demo test cov lint fmt typecheck check
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -26,6 +26,9 @@ migrate: ## Apply migrations to the dev database
 
 seed: ## Create demo tenants (password: demo-password-123)
 	$(COMPOSE) run --rm migrate python -m app.cli seed-demo
+
+reset-demo: ## Wipe ALL tenants and load the public demo stores (password: demo1234)
+	$(COMPOSE) run --rm -e DEMO_MODE=true migrate python -m app.cli reset-demo
 
 test: ## Run the test suite with coverage (needs `make up` or a local Postgres)
 	$(TEST_ENV) uv run pytest --cov --cov-report=term-missing --cov-fail-under=85

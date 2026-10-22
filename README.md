@@ -10,6 +10,14 @@ A multi-tenant SaaS backend for a retail and inventory domain: tenants, users, p
 a stock ledger and sales. Tenant isolation is enforced **twice**, in the application and
 in PostgreSQL with Row-Level Security, and the test suite proves each layer on its own.
 
+## Live demo
+
+> **Coming soon:** _URL to be added._ The demo runs on Google Cloud Run with Neon
+> (PostgreSQL 16) and a React point-of-sale frontend. It has two fictitious stores;
+> logging into one never shows the other's data. Credentials are shown on the login page
+> (`GET /demo/info`), and all data is reset every night. How it is deployed:
+> [docs/deploy.md](docs/deploy.md).
+
 ## Why it matters
 
 In a shared-schema multi-tenant system, one query that forgets
@@ -93,11 +101,15 @@ Without `make`: `docker compose up -d --build`, then
 | `GET/POST /users`, `GET/PATCH /users/{id}` | admin (manager can read) |
 | `GET /audit-log` | admin |
 | `GET /health` | public |
+| `GET /demo/info` (only when `DEMO_MODE=true`) | public |
 
 Auth details: bcrypt password hashes; a signed (itsdangerous) `HttpOnly`,
-`SameSite=Strict` session cookie holding a random token whose SHA-256 is stored
-server-side; 5 failed attempts lock the account for 15 minutes; logout, deactivation and
-password changes revoke sessions.
+`SameSite=Lax` (configurable) session cookie holding a random token whose SHA-256 is
+stored server-side; 5 failed attempts lock the account for 15 minutes; logout,
+deactivation and password changes revoke sessions. With `DEMO_MODE=true`, failed logins
+throttle only the client IP + username for a short window, so visitors can't lock the
+shared demo accounts. Logins and writes are also rate-limited per IP (see
+[docs/deploy.md](docs/deploy.md#demo-mode-in-short)).
 
 ## How tenant isolation is proven by tests
 
@@ -152,11 +164,13 @@ app/
   models/       SQLAlchemy 2.x typed models
   schemas/      Pydantic v2 request/response models
   services/     business logic; every query tenant-scoped
-  cli.py        tenant provisioning and demo seed
+  cli.py        tenant provisioning, demo seed, reset-demo
+  demo.py       public demo stores and the reset job
 migrations/     Alembic revisions: schema, RLS + grants, login function, tenant_id backfill
-db/             cluster bootstrap (roles, databases) and docker init hook
+scripts/        bootstrap_roles.sql: roles + databases (superuser or managed owner such as Neon)
+db/             docker init hook
 tests/          pytest suite against real PostgreSQL
-docs/           architecture, ADRs, migrations guide, postmortem
+docs/           architecture, ADRs, migrations guide, deployment, postmortem
 ```
 
 ## Configuration
@@ -165,7 +179,23 @@ All settings come from environment variables (see [.env.example](.env.example)),
 with pydantic-settings. The repository contains no real secrets. Credentials in
 `docker-compose.yml` are development placeholders. In production, set `SECRET_KEY`,
 `COOKIE_SECURE=true` and distinct database passwords from your secret manager, and use
-`ENVIRONMENT=production` to disable the interactive docs.
+`ENVIRONMENT=production` to disable the interactive docs. Production refuses to start
+without a secure cookie and a real secret key.
+
+## Deployment
+
+[docs/deploy.md](docs/deploy.md) has the exact `gcloud` commands for the public demo:
+
+- Artifact Registry and Secret Manager.
+- The API as a Cloud Run service (`$PORT`, one worker per vCPU, small DB pool, trusted
+  proxy headers).
+- Migrations and the nightly demo reset as Cloud Run Jobs, with the reset triggered by
+  Cloud Scheduler.
+- A Neon database bootstrapped with `scripts/bootstrap_roles.sql`, which runs without
+  superuser rights.
+
+CI runs the whole suite against roles created both by a real superuser and by an
+emulated managed-Postgres owner.
 
 ## License
 
