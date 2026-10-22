@@ -14,7 +14,7 @@ query from the old code then returns zero rows or fails (see the
 
 1. **Alembic owns everything inside the database**: tables, indexes, RLS policies,
    grants, the `auth` schema and its function. A one-off bootstrap script
-   (`db/bootstrap.sql`) owns only cluster-level objects: roles and databases.
+   (`scripts/bootstrap_roles.sql`) owns only cluster-level objects: roles and databases.
 2. **Migrations run as `app_owner`**, a separate credential the API never receives.
    `transaction_per_migration = True`, so each revision is atomic.
 3. **Expand, migrate, contract.** A change that the running code depends on ships in

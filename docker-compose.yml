@@ -19,7 +19,7 @@ services:
       APP_DATABASES: "app app_test"
     volumes:
       - ./db/initdb:/docker-entrypoint-initdb.d:ro
-      - ./db/bootstrap.sql:/bootstrap/bootstrap.sql:ro
+      - ./scripts/bootstrap_roles.sql:/bootstrap/bootstrap_roles.sql:ro
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
