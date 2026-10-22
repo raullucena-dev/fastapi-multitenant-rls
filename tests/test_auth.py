@@ -32,7 +32,7 @@ def test_login_sets_hardened_session_cookie(tenant_a: TenantCtx, client: TestCli
 
     set_cookie = response.headers["set-cookie"].lower()
     assert "httponly" in set_cookie
-    assert "samesite=strict" in set_cookie
+    assert "samesite=lax" in set_cookie
 
     me = client.get("/auth/me")
     assert me.status_code == 200

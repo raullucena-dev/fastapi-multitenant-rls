@@ -14,6 +14,11 @@ from app.services.auth import AuthenticatedSession
 DbSession = Annotated[Session, Depends(get_db)]
 
 
+def client_ip(request: Request) -> str | None:
+    """Client address as seen after uvicorn's proxy-header handling (see docs/deploy.md)."""
+    return request.client.host if request.client else None
+
+
 def get_auth_session(request: Request, db: DbSession) -> AuthenticatedSession:
     """Authenticate the request and bind the DB session to the caller's tenant.
 

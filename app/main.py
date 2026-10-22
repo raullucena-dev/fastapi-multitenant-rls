@@ -4,11 +4,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
-from app.api.middleware import request_context
+from app.api.middleware import rate_limit, request_context
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.core.logging import configure_logging
+from app.core.ratelimit import SlidingWindow
 
 logger = logging.getLogger("app")
 
@@ -30,6 +31,9 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.environment != "production" else None,
         redoc_url=None,
     )
+    app.state.rate_limiter = SlidingWindow(60)
+    # Registered first so that request_context (added last, outermost) also logs 429s.
+    app.middleware("http")(rate_limit)
     app.middleware("http")(request_context)
     app.include_router(api_router)
 

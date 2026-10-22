@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core import clock
 from app.core.config import get_settings
 from app.core.errors import AccountLockedError, AuthenticationError
+from app.core.ratelimit import SlidingWindow
 from app.core.security import (
     SessionCookie,
     burn_password_check,
@@ -20,6 +21,25 @@ from app.models import User, UserSession
 from app.services import audit
 
 INVALID_CREDENTIALS = "invalid username or password"
+ACCOUNT_LOCKED = "account temporarily locked after repeated failed logins"
+DEMO_THROTTLED = "too many failed attempts from this address; try again in a minute"
+
+_demo_failures: SlidingWindow | None = None
+
+
+def demo_failures() -> SlidingWindow:
+    """Failed logins per (client IP, username), used instead of account lockout in demo mode.
+
+    A public demo shares its accounts with every visitor, so locking the account itself
+    would let anyone lock everyone else out. In demo mode only the offending client is
+    throttled, for a short window, and the account stays usable from other addresses.
+    """
+    global _demo_failures  # noqa: PLW0603
+    window = get_settings().demo_lockout_seconds
+    if _demo_failures is None or _demo_failures.window != window:
+        _demo_failures = SlidingWindow(window)
+    return _demo_failures
+
 
 _LOOKUP_SQL = text("SELECT user_id, tenant_id FROM auth.lookup_login_user(:username)")
 
@@ -30,14 +50,21 @@ class AuthenticatedSession:
     session: UserSession
 
 
-def login(db: Session, username: str, password: str) -> tuple[User, SessionCookie]:
+def login(
+    db: Session, username: str, password: str, client_ip: str | None = None
+) -> tuple[User, SessionCookie]:
     settings = get_settings()
+    demo_key = f"{client_ip or 'unknown'}|{username}" if settings.demo_mode else None
+    if demo_key and demo_failures().count(demo_key) >= settings.lockout_threshold:
+        raise AccountLockedError(DEMO_THROTTLED)
 
     # Tenant is unknown here: the SECURITY DEFINER function is the only path that
     # can see across tenants, and it returns nothing but (user_id, tenant_id).
     row = db.execute(_LOOKUP_SQL, {"username": username}).one_or_none()
     if row is None:
         burn_password_check(password)
+        if demo_key:
+            demo_failures().add(demo_key)
         raise AuthenticationError(INVALID_CREDENTIALS)
 
     bind_tenant(db, row.tenant_id)
@@ -48,11 +75,18 @@ def login(db: Session, username: str, password: str) -> tuple[User, SessionCooki
     ).one()
 
     now = clock.utcnow()
-    if user.locked_until is not None and user.locked_until > now:
+    if demo_key is None and user.locked_until is not None and user.locked_until > now:
         db.rollback()
-        raise AccountLockedError("account temporarily locked after repeated failed logins")
+        raise AccountLockedError(ACCOUNT_LOCKED)
 
     if not verify_password(password, user.password_hash):
+        if demo_key:
+            failures = demo_failures().add(demo_key)
+            audit.record(db, user, "auth.login_failed", "user", user.id)
+            db.commit()
+            if failures >= settings.lockout_threshold:
+                raise AccountLockedError(DEMO_THROTTLED)
+            raise AuthenticationError(INVALID_CREDENTIALS)
         user.failed_login_attempts += 1
         locked = user.failed_login_attempts >= settings.lockout_threshold
         if locked:
@@ -63,13 +97,15 @@ def login(db: Session, username: str, password: str) -> tuple[User, SessionCooki
         )
         db.commit()
         if locked:
-            raise AccountLockedError("account temporarily locked after repeated failed logins")
+            raise AccountLockedError(ACCOUNT_LOCKED)
         raise AuthenticationError(INVALID_CREDENTIALS)
 
     if not user.is_active:
         db.rollback()
         raise AuthenticationError(INVALID_CREDENTIALS)
 
+    if demo_key:
+        demo_failures().clear(demo_key)
     user.failed_login_attempts = 0
     user.locked_until = None
     token = new_session_token()

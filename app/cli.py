@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.tenant import bind_tenant
+from app.demo import DemoModeRequiredError, reset_demo
 from app.models import MovementReason, Product, Role, StockMovement, User
 from app.services.tenants import provision_tenant
 
@@ -114,7 +115,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     ct.add_argument("--slug", required=True)
     ct.add_argument("--admin-username", required=True)
     sub.add_parser("seed-demo", help=f"create demo tenants (password: {DEMO_PASSWORD})")
+    rd = sub.add_parser(
+        "reset-demo", help="wipe ALL tenants and reseed the public demo (needs DEMO_MODE=true)"
+    )
+    rd.add_argument("--days", type=int, default=14, help="days of sales history")
+    rd.add_argument("--seed", type=int, default=None, help="random seed (reproducible data)")
     args = parser.parse_args(argv)
+
+    if args.command == "reset-demo":
+        try:
+            summaries = reset_demo(days=args.days, seed=args.seed)
+        except DemoModeRequiredError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        for slug, summary in summaries.items():
+            print(
+                f"{slug}: tenant {summary.tenant_id}, {summary.products} products, "
+                f"{summary.sales} sales, {summary.movements} stock movements, "
+                f"users {', '.join(summary.users)}"
+            )
+        return 0
 
     if args.command == "create-tenant":
         password = os.environ.get("ADMIN_PASSWORD") or getpass.getpass("Admin password: ")

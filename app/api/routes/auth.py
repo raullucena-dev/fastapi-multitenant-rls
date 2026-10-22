@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 
-from app.api.deps import CurrentAuth, CurrentUser, DbSession
+from app.api.deps import CurrentAuth, CurrentUser, DbSession, client_ip
 from app.core.config import get_settings
 from app.core.security import encode_session_cookie
 from app.schemas.users import LoginRequest, UserOut
@@ -10,16 +10,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login")
-def login(payload: LoginRequest, db: DbSession, response: Response) -> UserOut:
+def login(payload: LoginRequest, db: DbSession, request: Request, response: Response) -> UserOut:
     settings = get_settings()
-    user, cookie = auth_service.login(db, payload.username, payload.password)
+    user, cookie = auth_service.login(
+        db, payload.username, payload.password, client_ip=client_ip(request)
+    )
     response.set_cookie(
         settings.session_cookie_name,
         encode_session_cookie(cookie),
         max_age=settings.session_ttl_minutes * 60,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="strict",
+        samesite=settings.cookie_samesite,
         path="/",
     )
     return UserOut.model_validate(user)
