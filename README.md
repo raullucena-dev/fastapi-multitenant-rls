@@ -12,13 +12,20 @@ in PostgreSQL with Row-Level Security, and the test suite proves each layer on i
 
 ## Live demo
 
+> **Demo:** <https://pos-web-281796293339.us-east1.run.app> (React point-of-sale UI,
+> [pos-demo-react](https://github.com/raullucena-dev/pos-demo-react))
+>
 > **API:** <https://pos-api-281796293339.us-east1.run.app>
 >
-> The demo API runs on Google Cloud Run with Neon (PostgreSQL 16). It has two fictitious
-> stores; logging into one never shows the other's data. Demo credentials are listed at
-> [`GET /demo/info`](https://pos-api-281796293339.us-east1.run.app/demo/info), and all
-> data is fictitious and periodically reset. It scales to zero, so the first request
-> may take a few seconds. How it is deployed: [docs/deploy.md](docs/deploy.md).
+> The demo runs on Google Cloud Run with Neon (PostgreSQL 16) and a React point-of-sale
+> frontend that reaches the API through its own nginx on the same origin. It has two
+> fictitious stores; logging into one never shows the other's data. Credentials are
+> shown on the login page (from
+> [`GET /demo/info`](https://pos-api-281796293339.us-east1.run.app/demo/info)), and all
+> data is fictitious and periodically reset. Both services scale to zero, so the first
+> request may take a few seconds. How it is deployed: [docs/deploy.md](docs/deploy.md).
+>
+> Or call the API directly:
 >
 > ```bash
 > API=https://pos-api-281796293339.us-east1.run.app
