@@ -18,16 +18,16 @@ denormalises `tenant_id` onto it so that RLS can protect it directly.
 ### Small table: one migration
 
 ```python
-op.add_column("sale_items", sa.Column("tenant_id", sa.Integer(), nullable=True))   # 1. nullable
+op.add_column("sale_items", sa.Column("tenant_id", sa.Integer(), nullable=True))  # 1. nullable
 
-for parent in ("tenants", "sales", "products"):                                   # owner is subject
-    op.execute(f"ALTER TABLE {parent} NO FORCE ROW LEVEL SECURITY")              # to FORCE RLS
+for parent in ("tenants", "sales", "products"):  # owner is subject
+    op.execute(f"ALTER TABLE {parent} NO FORCE ROW LEVEL SECURITY")  # to FORCE RLS
 op.execute("""UPDATE sale_items si SET tenant_id = s.tenant_id
               FROM sales s WHERE s.id = si.sale_id AND si.tenant_id IS NULL""")  # 2. backfill
 
 op.execute("ALTER TABLE sale_items ADD CONSTRAINT ck_tmp CHECK (tenant_id IS NOT NULL) NOT VALID")
 op.execute("ALTER TABLE sale_items VALIDATE CONSTRAINT ck_tmp")
-op.alter_column("sale_items", "tenant_id", nullable=False)                        # 3. NOT NULL
+op.alter_column("sale_items", "tenant_id", nullable=False)  # 3. NOT NULL
 op.execute("ALTER TABLE sale_items DROP CONSTRAINT ck_tmp")
 
 # composite FKs, then restore FORCE on the parents, then ENABLE/FORCE RLS + policy
